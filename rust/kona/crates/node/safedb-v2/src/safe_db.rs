@@ -1,9 +1,9 @@
-//! A [`rocksdb`]-backed [`SafeDbV1`] implementation.
+//! A [`rocksdb`]-backed [`SafeDbV2`] implementation.
 
 use crate::{
     encoding::SafeByL1BlockNum,
     error::SafeDbError,
-    traits::{SafeDbV1, SafeHeadRecord},
+    traits::{SafeDbV2, SafeHeadRecord},
 };
 use alloy_eips::BlockNumHash;
 use kona_protocol::L2BlockInfo;
@@ -15,15 +15,15 @@ use std::{
 
 /// A safe-head database that persists records to a [`rocksdb`] store.
 ///
-/// The store is held behind an [`RwLock`] so that [`SafeDb::close`] can drop it while ensuring
-/// no read iterator is still borrowing it, mirroring the read/write exclusion of the Go
+/// The store is held behind an [`RwLock`] so that [`SafeDatabaseV2::close`] can drop it while
+/// ensuring no read iterator is still borrowing it, mirroring the read/write exclusion of the Go
 /// implementation.
 #[derive(Debug)]
-pub struct SafeDb {
+pub struct SafeDatabaseV2 {
     inner: RwLock<Option<DB>>,
 }
 
-impl SafeDb {
+impl SafeDatabaseV2 {
     /// Opens (creating if necessary) a safe-head database at `path`.
     pub fn new(path: impl AsRef<Path>) -> Result<Self, SafeDbError> {
         let mut options = Options::default();
@@ -66,7 +66,7 @@ impl SafeDb {
     }
 }
 
-impl SafeDbV1 for SafeDb {
+impl SafeDbV2 for SafeDatabaseV2 {
     fn enabled(&self) -> bool {
         true
     }

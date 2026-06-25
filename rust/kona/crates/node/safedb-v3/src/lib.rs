@@ -18,12 +18,12 @@ mod safe_db;
 #[cfg(test)]
 mod tests;
 
-pub use disabled::DisabledDb;
+pub use disabled::DisabledDatabaseV3;
 pub use error::SafeDbError;
-pub use traits::{SafeDbV1, SafeHeadRecord};
+pub use traits::{SafeDbV3, SafeHeadRecord};
 
 #[cfg(feature = "rocksdb")]
-pub use safe_db::SafeDb;
+pub use safe_db::SafeDatabaseV3;
 
 #[cfg(test)]
-pub use traits::MockSafeDbV1;
+pub use traits::MockSafeDbV3;

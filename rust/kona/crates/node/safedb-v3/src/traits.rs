@@ -13,7 +13,7 @@ pub struct SafeHeadRecord {
     pub safe_head: BlockNumHash,
 }
 
-/// The first version of the safe-head database interface.
+/// The v3 safe-head database interface.
 ///
 /// Implementations record, per L1 block, the L2 safe head that derivation reached as of that
 /// block, and answer queries in both directions (L1 → safe head and safe head → L1).
@@ -21,7 +21,7 @@ pub struct SafeHeadRecord {
 /// Methods are synchronous: the backing store is queried in-process, and a future actor is
 /// expected to own a single instance and serialize access to it.
 #[cfg_attr(test, mockall::automock)]
-pub trait SafeDbV1 {
+pub trait SafeDbV3 {
     /// Reports whether this database actively records and serves derivation data.
     fn enabled(&self) -> bool;
 

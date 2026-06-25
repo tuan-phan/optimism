@@ -110,7 +110,7 @@ mod encoding {
 
 #[cfg(feature = "rocksdb")]
 mod safe_db {
-    use crate::{SafeDb, SafeDbError, SafeDbV1, SafeHeadRecord};
+    use crate::{SafeDatabaseV3, SafeDbError, SafeDbV3, SafeHeadRecord};
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
     use kona_protocol::{BlockInfo, L2BlockInfo};
@@ -141,9 +141,9 @@ mod safe_db {
         }
     }
 
-    fn open() -> (TempDir, SafeDb) {
+    fn open() -> (TempDir, SafeDatabaseV3) {
         let dir = TempDir::new().unwrap();
-        let db = SafeDb::new(dir.path()).unwrap();
+        let db = SafeDatabaseV3::new(dir.path()).unwrap();
         (dir, db)
     }
 
@@ -160,7 +160,7 @@ mod safe_db {
         let l1a = id(0x01, 0xaa, 100);
         let l1b = id(0x01, 0xbb, 150);
 
-        let verify = |db: &SafeDb| {
+        let verify = |db: &SafeDatabaseV3| {
             assert!(matches!(db.safe_head_at_l1(l1a.number - 1), Err(SafeDbError::NotFound)));
             assert_record(db.safe_head_at_l1(l1a.number).unwrap(), l1a, l2a.block_info.id());
             assert_record(db.safe_head_at_l1(l1a.number + 1).unwrap(), l1a, l2a.block_info.id());
@@ -168,14 +168,14 @@ mod safe_db {
             assert_record(db.safe_head_at_l1(l1b.number + 1).unwrap(), l1b, l2b.block_info.id());
         };
 
-        let db = SafeDb::new(dir.path()).unwrap();
+        let db = SafeDatabaseV3::new(dir.path()).unwrap();
         db.safe_head_updated(l2a, l1a).unwrap();
         db.safe_head_updated(l2b, l1b).unwrap();
         verify(&db);
 
         // Close and reopen to confirm the data is durable.
         db.close().unwrap();
-        let reopened = SafeDb::new(dir.path()).unwrap();
+        let reopened = SafeDatabaseV3::new(dir.path()).unwrap();
         verify(&reopened);
     }
 
@@ -310,7 +310,7 @@ mod safe_db {
         db.safe_head_updated(l2b, l1b).unwrap();
         db.safe_head_updated(l2c, l1c).unwrap();
 
-        let verify = |db: &SafeDb| {
+        let verify = |db: &SafeDatabaseV3| {
             assert_record(db.safe_head_at_l1(l1a.number).unwrap(), l1a, l2a.block_info.id());
             assert_record(db.safe_head_at_l1(l1b.number).unwrap(), l1b, l2b.block_info.id());
             assert_record(db.safe_head_at_l1(l1c.number).unwrap(), l1c, l2c.block_info.id());
@@ -326,7 +326,7 @@ mod safe_db {
         verify(&db);
     }
 
-    fn populated_l1_at_safe_head_db() -> (TempDir, SafeDb) {
+    fn populated_l1_at_safe_head_db() -> (TempDir, SafeDatabaseV3) {
         let (dir, db) = open();
         db.safe_head_updated(l2(0x02, 0xaa, 500, 0), id(0x01, 0xaa, 100)).unwrap();
         db.safe_head_updated(l2(0x02, 0xbb, 510, 0), id(0x01, 0xbb, 110)).unwrap();
@@ -378,20 +378,20 @@ mod safe_db {
         // rocksdb holds an exclusive lock on an open database directory, so a second open of the
         // same path surfaces a backend error.
         let (dir, _held) = open();
-        assert!(matches!(SafeDb::new(dir.path()), Err(SafeDbError::Backend(_))));
+        assert!(matches!(SafeDatabaseV3::new(dir.path()), Err(SafeDbError::Backend(_))));
     }
 }
 
 mod disabled {
-    use crate::{DisabledDb, SafeDbError, SafeDbV1};
+    use crate::{DisabledDatabaseV3, SafeDbError, SafeDbV3};
 
     #[test]
     fn l1_at_safe_head_disabled() {
-        assert!(matches!(DisabledDb.l1_at_safe_head(500), Err(SafeDbError::NotEnabled)));
+        assert!(matches!(DisabledDatabaseV3.l1_at_safe_head(500), Err(SafeDbError::NotEnabled)));
     }
 
     #[test]
     fn reports_disabled() {
-        assert!(!DisabledDb.enabled());
+        assert!(!DisabledDatabaseV3.enabled());
     }
 }

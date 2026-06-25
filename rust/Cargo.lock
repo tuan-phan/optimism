@@ -6479,7 +6479,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "kona-safedb"
+name = "kona-safedb-v2"
+version = "0.1.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "kona-protocol",
+ "mockall",
+ "rocksdb",
+ "rstest",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "kona-safedb-v3"
 version = "0.1.0"
 dependencies = [
  "alloy-eips",
