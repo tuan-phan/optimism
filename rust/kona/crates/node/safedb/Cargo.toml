@@ -29,9 +29,9 @@ rocksdb = { workspace = true, features = ["snappy"], optional = true }
 # Misc
 tracing.workspace = true
 thiserror.workspace = true
-mockall.workspace = true
 
 [dev-dependencies]
+mockall.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
 

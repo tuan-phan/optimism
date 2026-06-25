@@ -2,13 +2,7 @@
 
 #[cfg(feature = "rocksdb")]
 mod encoding {
-    use crate::{
-        encoding::{
-            KEY_LEN, decode_safe_by_l1_block_num, safe_by_l1_block_num_key,
-            safe_by_l1_block_num_value,
-        },
-        error::SafeDbError,
-    };
+    use crate::{encoding::SafeByL1BlockNum, error::SafeDbError};
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, b256};
     use rstest::rstest;
@@ -29,11 +23,11 @@ mod encoding {
 
     #[test]
     fn roundtrip() {
-        let key = safe_by_l1_block_num_key(l1().number);
-        let val = safe_by_l1_block_num_value(l1(), l2());
-        let (actual_l1, actual_l2) = decode_safe_by_l1_block_num(&key, &val).unwrap();
-        assert_eq!(l1(), actual_l1);
-        assert_eq!(l2(), actual_l2);
+        let key = SafeByL1BlockNum::key(l1().number);
+        let val = SafeByL1BlockNum::value(l1(), l2());
+        let record = SafeByL1BlockNum::decode(&key, &val).unwrap();
+        assert_eq!(l1(), record.l1);
+        assert_eq!(l2(), record.safe_head);
     }
 
     #[rstest]
@@ -45,14 +39,14 @@ mod encoding {
     #[case::too_short_value(valid_key().to_vec(), vec![1, 2, 3, 4])]
     #[case::too_long_value(valid_key().to_vec(), too_long_value())]
     fn invalid_entries(#[case] key: Vec<u8>, #[case] val: Vec<u8>) {
-        assert!(matches!(decode_safe_by_l1_block_num(&key, &val), Err(SafeDbError::InvalidEntry)));
+        assert!(matches!(SafeByL1BlockNum::decode(&key, &val), Err(SafeDbError::InvalidEntry)));
     }
 
     #[test]
     fn key_layout_is_exact() {
         // One prefix byte (0x00) followed by the big-endian L1 block number. This exact layout
         // is what makes an on-disk database interchangeable with the Go implementation.
-        let key = safe_by_l1_block_num_key(0x0102_0304_0506_0708);
+        let key = SafeByL1BlockNum::key(0x0102_0304_0506_0708);
         assert_eq!(key, [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
     }
 
@@ -60,7 +54,7 @@ mod encoding {
     fn value_layout_is_exact() {
         let l1 = BlockNumHash { hash: B256::repeat_byte(0xab), number: 0 };
         let l2 = BlockNumHash { hash: B256::repeat_byte(0xcd), number: 0x1122_3344_5566_7788 };
-        let value = safe_by_l1_block_num_value(l1, l2);
+        let value = SafeByL1BlockNum::value(l1, l2);
 
         let mut expected = [0u8; 72];
         expected[0..32].fill(0xab);
@@ -81,18 +75,18 @@ mod encoding {
             u64::MAX,
         ];
         for window in vals.windows(2) {
-            let prev = safe_by_l1_block_num_key(window[0]);
-            let cur = safe_by_l1_block_num_key(window[1]);
+            let prev = SafeByL1BlockNum::key(window[0]);
+            let cur = SafeByL1BlockNum::key(window[1]);
             assert!(prev < cur, "expected key for {} to be less than {}", window[0], window[1]);
         }
     }
 
-    fn valid_key() -> [u8; KEY_LEN] {
-        safe_by_l1_block_num_key(l1().number)
+    fn valid_key() -> [u8; SafeByL1BlockNum::KEY_LEN] {
+        SafeByL1BlockNum::key(l1().number)
     }
 
     fn valid_value() -> Vec<u8> {
-        safe_by_l1_block_num_value(l1(), l2()).to_vec()
+        SafeByL1BlockNum::value(l1(), l2()).to_vec()
     }
 
     fn too_long_key() -> Vec<u8> {
@@ -227,6 +221,33 @@ mod safe_db {
         db.safe_head_reset(l2b).unwrap();
 
         assert_record(db.first_entry().unwrap(), l1a, l2a.block_info.id());
+    }
+
+    #[test]
+    fn last_entry_empty_database() {
+        let (_dir, db) = open();
+        assert!(matches!(db.last_entry(), Err(SafeDbError::NotFound)));
+    }
+
+    #[test]
+    fn last_entry_returns_highest_l1() {
+        let (_dir, db) = open();
+        let l2a = l2(0x02, 0xaa, 20, 0);
+        let l2b = l2(0x02, 0xbb, 25, 0);
+        let l1a = id(0x01, 0xaa, 100);
+        let l1b = id(0x01, 0xbb, 150);
+
+        // Insert out of order to confirm we return the highest L1, not the last-inserted entry.
+        db.safe_head_updated(l2b, l1b).unwrap();
+        db.safe_head_updated(l2a, l1a).unwrap();
+
+        assert_record(db.last_entry().unwrap(), l1b, l2b.block_info.id());
+    }
+
+    #[test]
+    fn reports_enabled() {
+        let (_dir, db) = open();
+        assert!(db.enabled());
     }
 
     #[test]

@@ -1,9 +1,7 @@
 //! A [`rocksdb`]-backed [`SafeDbV1`] implementation.
 
 use crate::{
-    encoding::{
-        decode_safe_by_l1_block_num, max_key, safe_by_l1_block_num_key, safe_by_l1_block_num_value,
-    },
+    encoding::SafeByL1BlockNum,
     error::SafeDbError,
     traits::{SafeDbV1, SafeHeadRecord},
 };
@@ -41,31 +39,31 @@ impl SafeDb {
     fn write_guard(&self) -> RwLockWriteGuard<'_, Option<DB>> {
         self.inner.write().unwrap_or_else(PoisonError::into_inner)
     }
-}
 
-/// Write options that fsync each write, matching the Go implementation's synchronous writes.
-fn sync_write_options() -> WriteOptions {
-    let mut options = WriteOptions::default();
-    options.set_sync(true);
-    options
-}
+    /// Write options that fsync each write, matching the Go implementation's synchronous writes.
+    fn sync_write_options() -> WriteOptions {
+        let mut options = WriteOptions::default();
+        options.set_sync(true);
+        options
+    }
 
-/// Read options bounding iteration to the "safe head by L1 block number" column.
-///
-/// The upper bound is exclusive, matching the Go implementation's `IterRange`. Without these
-/// bounds an iterator would walk into any other column a future schema adds.
-fn column_read_options() -> ReadOptions {
-    let mut options = ReadOptions::default();
-    options.set_iterate_lower_bound(safe_by_l1_block_num_key(0).to_vec());
-    options.set_iterate_upper_bound(max_key().to_vec());
-    options
-}
+    /// Read options bounding iteration to the "safe head by L1 block number" column.
+    ///
+    /// The upper bound is exclusive, matching the Go implementation's `IterRange`. Without these
+    /// bounds an iterator would walk into any other column a future schema adds.
+    fn column_read_options() -> ReadOptions {
+        let mut options = ReadOptions::default();
+        options.set_iterate_lower_bound(SafeByL1BlockNum::key(0).to_vec());
+        options.set_iterate_upper_bound(SafeByL1BlockNum::max_key().to_vec());
+        options
+    }
 
-/// Decodes the entry the iterator is currently positioned on.
-fn current_entry(iter: &DBRawIterator<'_>) -> Result<(BlockNumHash, BlockNumHash), SafeDbError> {
-    let key = iter.key().ok_or(SafeDbError::InvalidEntry)?;
-    let value = iter.value().ok_or(SafeDbError::InvalidEntry)?;
-    decode_safe_by_l1_block_num(key, value)
+    /// Decodes the entry the iterator is currently positioned on.
+    fn current_entry(iter: &DBRawIterator<'_>) -> Result<SafeHeadRecord, SafeDbError> {
+        let key = iter.key().ok_or(SafeDbError::InvalidEntry)?;
+        let value = iter.value().ok_or(SafeDbError::InvalidEntry)?;
+        SafeByL1BlockNum::decode(key, value)
+    }
 }
 
 impl SafeDbV1 for SafeDb {
@@ -87,10 +85,10 @@ impl SafeDbV1 for SafeDb {
         );
         let mut batch = WriteBatch::default();
         batch.put(
-            safe_by_l1_block_num_key(l1_head.number),
-            safe_by_l1_block_num_value(l1_head, safe_head.block_info.id()),
+            SafeByL1BlockNum::key(l1_head.number),
+            SafeByL1BlockNum::value(l1_head, safe_head.block_info.id()),
         );
-        db.write_opt(batch, &sync_write_options())?;
+        db.write_opt(batch, &Self::sync_write_options())?;
         Ok(())
     }
 
@@ -99,11 +97,11 @@ impl SafeDbV1 for SafeDb {
         let db = guard.as_ref().ok_or(SafeDbError::Closed)?;
         tracing::info!(l2_number = safe_head.block_info.number, "Resetting safe head db");
 
-        let mut iter = db.raw_iterator_opt(column_read_options());
-        iter.seek(safe_by_l1_block_num_key(safe_head.l1_origin.number));
+        let mut iter = db.raw_iterator_opt(Self::column_read_options());
+        iter.seek(SafeByL1BlockNum::key(safe_head.l1_origin.number));
         while iter.valid() {
-            let (l1_block, l2_block) = current_entry(&iter)?;
-            if l2_block.number >= safe_head.block_info.number {
+            let record = Self::current_entry(&iter)?;
+            if record.safe_head.number >= safe_head.block_info.number {
                 // Clone the boundary key before `prev()` invalidates the borrow.
                 let boundary_key = iter.key().ok_or(SafeDbError::InvalidEntry)?.to_vec();
                 iter.prev();
@@ -113,7 +111,7 @@ impl SafeDbV1 for SafeDb {
                 }
 
                 let mut batch = WriteBatch::default();
-                batch.delete_range(boundary_key.as_slice(), max_key().as_slice());
+                batch.delete_range(boundary_key.as_slice(), SafeByL1BlockNum::max_key().as_slice());
                 // If a previous entry exists, the boundary L1 block is a real recorded
                 // transition, so re-record the reset safe head there. If it does not, we cannot
                 // know whether the reset head became safe at that L1 block or merely before our
@@ -121,10 +119,10 @@ impl SafeDbV1 for SafeDb {
                 if has_prev_entry {
                     batch.put(
                         boundary_key.as_slice(),
-                        safe_by_l1_block_num_value(l1_block, safe_head.block_info.id()).as_slice(),
+                        SafeByL1BlockNum::value(record.l1, safe_head.block_info.id()).as_slice(),
                     );
                 }
-                db.write_opt(batch, &sync_write_options())?;
+                db.write_opt(batch, &Self::sync_write_options())?;
                 return Ok(());
             }
             iter.next();
@@ -136,55 +134,52 @@ impl SafeDbV1 for SafeDb {
     fn safe_head_at_l1(&self, l1_block_num: u64) -> Result<SafeHeadRecord, SafeDbError> {
         let guard = self.read_guard();
         let db = guard.as_ref().ok_or(SafeDbError::Closed)?;
-        let mut iter = db.raw_iterator_opt(column_read_options());
+        let mut iter = db.raw_iterator_opt(Self::column_read_options());
         // Largest key <= l1_block_num, equivalent to the Go `SeekLT(l1_block_num + 1)`.
-        iter.seek_for_prev(safe_by_l1_block_num_key(l1_block_num));
+        iter.seek_for_prev(SafeByL1BlockNum::key(l1_block_num));
         if !iter.valid() {
             iter.status()?;
             return Err(SafeDbError::NotFound);
         }
-        let (l1, safe_head) = current_entry(&iter)?;
-        Ok(SafeHeadRecord { l1, safe_head })
+        Self::current_entry(&iter)
     }
 
     fn first_entry(&self) -> Result<SafeHeadRecord, SafeDbError> {
         let guard = self.read_guard();
         let db = guard.as_ref().ok_or(SafeDbError::Closed)?;
-        let mut iter = db.raw_iterator_opt(column_read_options());
+        let mut iter = db.raw_iterator_opt(Self::column_read_options());
         iter.seek_to_first();
         if !iter.valid() {
             iter.status()?;
             return Err(SafeDbError::NotFound);
         }
-        let (l1, safe_head) = current_entry(&iter)?;
-        Ok(SafeHeadRecord { l1, safe_head })
+        Self::current_entry(&iter)
     }
 
     fn last_entry(&self) -> Result<SafeHeadRecord, SafeDbError> {
         let guard = self.read_guard();
         let db = guard.as_ref().ok_or(SafeDbError::Closed)?;
-        let mut iter = db.raw_iterator_opt(column_read_options());
+        let mut iter = db.raw_iterator_opt(Self::column_read_options());
         iter.seek_to_last();
         if !iter.valid() {
             iter.status()?;
             return Err(SafeDbError::NotFound);
         }
-        let (l1, safe_head) = current_entry(&iter)?;
-        Ok(SafeHeadRecord { l1, safe_head })
+        Self::current_entry(&iter)
     }
 
     fn l1_at_safe_head(&self, target_l2_num: u64) -> Result<SafeHeadRecord, SafeDbError> {
         let guard = self.read_guard();
         let db = guard.as_ref().ok_or(SafeDbError::Closed)?;
-        let mut iter = db.raw_iterator_opt(column_read_options());
+        let mut iter = db.raw_iterator_opt(Self::column_read_options());
 
         iter.seek_to_last();
         if !iter.valid() {
             iter.status()?;
             return Err(SafeDbError::L1AtSafeHeadNotFound);
         }
-        let (mut cursor_l1, mut cursor_l2) = current_entry(&iter)?;
-        if target_l2_num > cursor_l2.number {
+        let mut cursor = Self::current_entry(&iter)?;
+        if target_l2_num > cursor.safe_head.number {
             return Err(SafeDbError::L1AtSafeHeadNotFound);
         }
         loop {
@@ -193,15 +188,14 @@ impl SafeDbV1 for SafeDb {
                 iter.status()?;
                 break;
             }
-            let (prev_l1, prev_l2) = current_entry(&iter)?;
-            if prev_l2.number < target_l2_num {
-                return Ok(SafeHeadRecord { l1: cursor_l1, safe_head: cursor_l2 });
+            let prev = Self::current_entry(&iter)?;
+            if prev.safe_head.number < target_l2_num {
+                return Ok(cursor);
             }
-            cursor_l1 = prev_l1;
-            cursor_l2 = prev_l2;
+            cursor = prev;
         }
-        if cursor_l2.number == target_l2_num {
-            return Ok(SafeHeadRecord { l1: cursor_l1, safe_head: cursor_l2 });
+        if cursor.safe_head.number == target_l2_num {
+            return Ok(cursor);
         }
         Err(SafeDbError::L1AtSafeHeadUnavailable)
     }
