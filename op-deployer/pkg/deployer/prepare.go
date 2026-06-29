@@ -159,6 +159,21 @@ func Prepare(ctx context.Context, cfg PrepareConfig) error {
 		// Record the predicted addresses into the chain state marked as not deployed yet.
 		st.SetChainContracts(chain.ID, pipeline.OpChainContractsFromDeployOutput(out), false)
 
+		// Select the anchor block from the L1StartBlockHash in the intent.
+		anchorBlock, err := selectAnchorBlock(ctx, l1RPC, chain.L1StartBlockHash)
+		if err != nil {
+			return fmt.Errorf("failed to select anchor block: %w", err)
+		}
+		cfg.Logger.Info("selected anchor block", "number", uint64(anchorBlock.Number), "hash", anchorBlock.Hash)
+
+		// Pin the anchor block onto this chain's state.
+		chainState, err := st.Chain(chain.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get chain state for %s: %w", chain.ID.Hex(), err)
+		}
+		anchor := *anchorBlock
+		chainState.StartBlock = &anchor
+
 		cfg.Logger.Info(
 			"predicted L1 addresses",
 			"chain", chain.ID.Hex(),
