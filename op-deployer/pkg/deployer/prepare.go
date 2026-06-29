@@ -145,6 +145,12 @@ func Prepare(ctx context.Context, cfg PrepareConfig) error {
 		return fmt.Errorf("failed to load DeployOPChain script: %w", err)
 	}
 
+	// Fetch the L1 safe block once and share it across all chains
+	safe, err := fetchL1BlockRefByNumber(ctx, l1RPC, "safe")
+	if err != nil {
+		return fmt.Errorf("failed to fetch L1 safe block: %w", err)
+	}
+
 	for _, chain := range intent.Chains {
 		dci, err := makePredictionInput(intent, st, chain)
 		if err != nil {
@@ -160,7 +166,7 @@ func Prepare(ctx context.Context, cfg PrepareConfig) error {
 		st.SetChainContracts(chain.ID, pipeline.OpChainContractsFromDeployOutput(out), false)
 
 		// Select the anchor block from the L1StartBlockHash in the intent.
-		anchorBlock, err := selectAnchorBlock(ctx, l1RPC, chain.L1StartBlockHash)
+		anchorBlock, err := selectAnchorBlock(ctx, l1RPC, safe, chain.L1StartBlockHash)
 		if err != nil {
 			return fmt.Errorf("failed to select anchor block: %w", err)
 		}
